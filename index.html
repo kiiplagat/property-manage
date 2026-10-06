@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>STB - Rental Manager</title>
+<style>
+:root{--ink:#16302b;--key:#c28a2c;--bg:#eef1ef;--line:#d3dbd7}
+*{box-sizing:border-box}
+body{margin:0;font:15px/1.5 system-ui,sans-serif;background:var(--bg);color:#1c2623}
+header{background:var(--ink);color:#fff;padding:12px 16px;display:flex;justify-content:space-between;align-items:center}
+header b{font-size:18px;letter-spacing:.3px}
+nav{display:flex;gap:6px;padding:10px 16px;overflow-x:auto}
+button{font:inherit;cursor:pointer;border:1px solid var(--line);background:#fff;border-radius:6px;padding:8px 12px}
+button.on,button.p{background:var(--ink);color:#fff;border-color:var(--ink)}
+button.d{color:#a3271f}
+main{max-width:920px;margin:auto;padding:8px 16px 40px}
+.card{background:#fff;border:1px solid var(--line);border-radius:6px;padding:14px;margin-bottom:14px}
+h3{margin:0 0 10px}
+input,select,textarea{width:100%;padding:9px;margin:3px 0 10px;border:1px solid var(--line);border-radius:6px;font:inherit}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px}
+.stat b{display:block;font-size:22px;color:var(--ink)}
+.t{overflow-x:auto}table{width:100%;border-collapse:collapse}
+td,th{text-align:left;padding:8px 6px;border-bottom:1px solid #e6ebe8;white-space:nowrap}
+.owe{color:#a3271f;font-weight:600}.ok{color:#23704a;font-weight:600}
+.tag{padding:2px 9px;border-radius:99px;background:#e4ece8;font-size:12px}
+.tag.open{background:#f6e3c0}.tag.resolved{background:#cfe8d9}
+#login{max-width:360px;margin:8vh auto;padding:0 16px}
+</style></head><body><div id="app"></div>
+<script>
+let reg = false, U = JSON.parse(localStorage.u || 'null'), T = localStorage.t || '', tab;
+const $ = s => document.querySelector(s), kes = n => 'KES ' + Number(n || 0).toLocaleString();
+const fd = f => Object.fromEntries(new FormData(f));
+const tabs = { landlord: ['Overview', 'Properties', 'Tenants', 'Payments', 'Complaints', 'Caretakers'], caretaker: ['Tenants', 'Payments', 'Complaints'], tenant: ['My account', 'Complaints'] };
+
+async function api(p, m = 'GET', b) {
+  const r = await fetch('/api/' + p, { method: m, headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + T }, body: b && JSON.stringify(b) });
+  const d = await r.json();
+  if (!r.ok) { if (r.status === 401 && U) out(); throw new Error(d.error); }
+  return d;
+}
+const out = () => { localStorage.clear(); U = null; T = ''; render(); };
+async function send(p, e, m = 'POST') { e.preventDefault(); try { await api(p, m, fd(e.target)); render(); } catch (x) { alert(x.message); } }
+async function del(p) { if (confirm('Delete this record?')) { try { await api(p, 'DELETE'); render(); } catch (x) { alert(x.message); } } }
+async function login(e, path = 'login') {
+  e.preventDefault();
+  try {
+    const body = fd(e.target);
+    if (path === 'register') { await api('register', 'POST', body); }
+    const d = await api('login', 'POST', body);
+    T = d.token; U = d.user; localStorage.t = T; localStorage.u = JSON.stringify(U); tab = null; render();
+  } catch (x) { alert(x.message); }
+}
+const opts = (rows, label) => rows.map(r => `<option value="${r.id}">${label(r)}</option>`).join('');
+const table = (head, rows) => `<div class="t"><table><tr>${head.map(h => `<th>${h}</th>`).join('')}</tr>${rows.map(r => `<tr>${r.map(c => `<td>${c ?? ''}</td>`).join('')}</tr>`).join('') || `<tr><td colspan="${head.length}">Nothing here yet.</td></tr>`}</table></div>`;
+const bal = n => `<span class="${n > 0 ? 'owe' : 'ok'}">${n > 0 ? 'Owes ' + kes(n) : n < 0 ? 'Credit ' + kes(-n) : 'Paid up'}</span>`;
+
+async function render() {
+  const el = $('#app');
+  if (!U) {
+    el.innerHTML = reg
+      ? `<div id="login"><h2>Create landlord account</h2>
+        <form class="card" onsubmit="login(event,'register')"><input name="name" placeholder="Your name" required><input name="username" placeholder="Username" required><input name="password" type="password" placeholder="Password" required><button class="p">Create account</button></form>
+        <button onclick="reg=false;render()">Back to log in</button></div>`
+      : `<div id="login"><h2>STB Rental Manager</h2>
+        <form class="card" onsubmit="login(event)"><input name="username" placeholder="Username" required><input name="password" type="password" placeholder="Password" required><button class="p">Log in</button></form>
+        <button onclick="reg=true;render()">First time? Create landlord account</button></div>`;
+    return;
+  }
+  const list = tabs[U.role]; tab = list.includes(tab) ? tab : list[0];
+  el.innerHTML = `<header><b>STB</b><span>${U.name} (${U.role}) <button onclick="out()">Log out</button></span></header>
+  <nav>${list.map(t => `<button class="${t === tab ? 'on' : ''}" onclick="tab='${t}';render()">${t}</button>`).join('')}</nav><main id="m">Loading...</main>`;
+  try { $('#m').innerHTML = await views[tab](); } catch (x) { $('#m').innerHTML = `<div class="card">${x.message}</div>`; }
+}
+
+const views = {
+  async Overview() {
+    const s = await api('summary');
+    return `<div class="grid">${[['Units', s.units], ['Tenants', s.tenants], ['Collected this month', kes(s.collected)], ['Total arrears', kes(s.arrears)], ['Open complaints', s.openComplaints]]
+      .map(([l, v]) => `<div class="card stat"><b>${v}</b>${l}</div>`).join('')}</div>`;
+  },
+  async Properties() {
+    const [p, u] = await Promise.all([api('properties'), api('units')]);
+    return `<div class="card"><h3>Add property</h3><form onsubmit="send('properties',event)"><input name="name" placeholder="Property name" required><input name="location" placeholder="Location"><button class="p">Add property</button></form></div>
+    <div class="card"><h3>Add unit</h3><form onsubmit="send('units',event)"><select name="property_id" required>${opts(p, x => x.name)}</select><input name="number" placeholder="Unit / house number" required><input name="rent" type="number" placeholder="Monthly rent" required><button class="p">Add unit</button></form></div>
+    <div class="card"><h3>Units</h3>${table(['Property', 'Unit', 'Rent', 'Tenant'], u.map(x => [x.property, x.number, kes(x.rent), x.tenant || 'Vacant']))}</div>`;
+  },
+  async Tenants() {
+    const t = await api('tenants'), L = U.role === 'landlord';
+    let form = '';
+    if (L) {
+      const u = (await api('units')).filter(x => !x.tenant);
+      form = `<div class="card"><h3>Add tenant</h3><form onsubmit="send('tenants',event)"><input name="name" placeholder="Full name" required><input name="phone" placeholder="Phone" required><input name="id_number" placeholder="ID number"><select name="unit_id" required>${opts(u, x => `${x.property} - ${x.number} (${kes(x.rent)})`)}</select><label>Move-in date<input name="move_in" type="date" required></label><input name="deposit" type="number" placeholder="Deposit paid"><input name="username" placeholder="Tenant login username" required><input name="password" placeholder="Tenant login password" required><button class="p">Save tenant</button></form></div>`;
+    }
+    return form + `<div class="card"><h3>Tenants</h3>${table(['Name', 'Phone', 'Unit', 'Rent', 'Move-in', 'Balance', ''], t.map(x => [x.name, x.phone, x.unit, kes(x.rent), x.move_in, bal(x.balance), L ? `<button class="d" onclick="del('tenants/${x.id}')">Remove</button>` : '']))}</div>`;
+  },
+  async Payments() {
+    const [t, p] = await Promise.all([api('tenants'), api('payments')]), L = U.role === 'landlord';
+    return `<div class="card"><h3>Record payment</h3><form onsubmit="send('payments',event)"><select name="tenant_id" required>${opts(t, x => `${x.name} - ${x.unit}`)}</select><input name="amount" type="number" placeholder="Amount" required><select name="method"><option>cash</option><option>mpesa</option><option>bank</option></select><input name="note" placeholder="Note or M-Pesa code"><button class="p">Save payment</button></form></div>
+    <div class="card"><h3>Payment history</h3>${table(['Date', 'Tenant', 'Unit', 'Amount', 'Method', 'Note', ''], p.map(x => [x.date, x.tenant, x.unit, kes(x.amount), x.method, x.note, L ? `<button class="d" onclick="del('payments/${x.id}')">Delete</button>` : '']))}</div>`;
+  },
+  async Complaints() {
+    const c = await api('complaints'), T_ = U.role === 'tenant';
+    const form = T_ ? `<div class="card"><h3>Report an issue</h3><form onsubmit="send('complaints',event)"><input name="title" placeholder="What is the problem?" required><textarea name="description" rows="3" placeholder="Details"></textarea><button class="p">Send to landlord</button></form></div>` : '';
+    const items = c.map(x => `<div class="card"><b>${x.title}</b> <span class="tag ${x.status}">${x.status}</span><br>${T_ ? '' : `${x.tenant} - ${x.unit}<br>`}${x.description || ''}<br><small>${x.created_at}</small>
+      ${T_ ? (x.comment ? `<p><b>Reply:</b> ${x.comment}</p>` : '') : `<form onsubmit="send('complaints/${x.id}',event,'PATCH')"><select name="status">${['open', 'in progress', 'resolved'].map(s => `<option ${s === x.status ? 'selected' : ''}>${s}</option>`).join('')}</select><input name="comment" placeholder="Comment" value="${x.comment || ''}"><button>Update</button></form>`}</div>`).join('');
+    return form + (items || '<div class="card">No complaints yet.</div>');
+  },
+  async Caretakers() {
+    const [c, p] = await Promise.all([api('caretakers'), api('properties')]);
+    return `<div class="card"><h3>Add caretaker</h3><form onsubmit="send('caretakers',event)"><input name="name" placeholder="Name" required><input name="username" placeholder="Username" required><input name="password" placeholder="Password" required><select name="property_id" required>${opts(p, x => x.name)}</select><button class="p">Add caretaker</button></form></div>
+    <div class="card"><h3>Caretakers</h3>${table(['Name', 'Username', 'Property', ''], c.map(x => [x.name, x.username, x.property, `<button class="d" onclick="del('caretakers/${x.id}')">Remove</button>`]))}</div>`;
+  },
+  async 'My account'() {
+    const m = await api('me');
+    return `<div class="card"><h3>${m.name}</h3>Unit ${m.unit} - rent ${kes(m.rent)}/month<br>Balance: ${bal(m.balance)}</div>
+    <div class="card"><h3>My payments</h3>${table(['Date', 'Amount', 'Method', 'Note'], m.payments.map(x => [x.date, kes(x.amount), x.method, x.note]))}</div>`;
+  }
+};
+render();
+</script></body></html>
